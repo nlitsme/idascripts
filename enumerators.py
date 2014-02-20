@@ -1,4 +1,4 @@
-# (C) 2013-2014 itsme@xs4all.nl
+# (C) 2013-2014 Willem Hengeveld <itsme@xs4all.nl>
 
 import idaapy
 import idc
@@ -15,7 +15,12 @@ def Texts(ea, endea, searchstr, flags):
     @return: list of addresses matching searchstr
 
     Example::
-
+        for ea in Texts(FirstSeg(), BADADDR, "LDR *PC, =", SEARCH_REGEX):
+            f = idaapi.get_func(ea)
+            if f and f.startEA==ea:
+                n= idaapi.get_name(BADADDR, ea)
+                if not n.startswith("sub_"):
+                    MakeName(ea, "j_%s" %n)
     """
     ea= idaapi.find_text(ea, 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
     while ea!=idaapi.BADADDR and ea<endea:
@@ -32,7 +37,7 @@ def NonFuncs(ea, endea):
     @return: list of addresses containing code, but not in a function
 
     Example::
-        for ea in NonFuncs(SegFirst(), BADADDR):
+        for ea in NonFuncs(FirstSeg(), BADADDR):
             if not MakeFunction(ea):
                 Jump(ea)
                 break
@@ -63,7 +68,7 @@ def Undefs(ea, endea):
     @return: list of addresses of undefined bytes
 
     Example::
-        for ea in Undefs(SegFirst(), BADADDR):
+        for ea in Undefs(FirstSeg(), BADADDR):
             if isCode(GetFlags(PrevHead(ea))) and (ea%4)!=0 and iszero(ea, 4-(ea%4)):
                 MakeAlign(ea, 4-(ea%4), 2)
 
@@ -95,7 +100,10 @@ def Binaries(ea, endea, searchstr):
                OpEnumEx(insn.ea, 1, sysenum, 0)
                if Dword(insn.ea-4)==0xe92d0090 and Dword(insn.ea+8)==0xe8bd0090:
                     syscall= GetConstName(GetConst(sysenum, insn.Op2.value, 0))
-                    MakeName(insn.ea-4, "libc_%s" % syscall[4:])
+                    if syscall:
+                        MakeName(insn.ea-4, "syscall_%s" % syscall[4:])
+                    else:
+                        print "unknown syscall number: %08x" % insn.Op2.value
 
     """
     ea= idaapi.find_binary(ea, +endea, searchstr, 16, idaapi.SEARCH_DOWN)
