@@ -1,9 +1,49 @@
 # (C) 2013-2014 Willem Hengeveld <itsme@xs4all.nl>
 
-import idaapy
+import idaapi
 import idc
+import types
 
-def Texts(ea, endea, searchstr, flags):
+
+""" utilities for parsing arguments """
+
+def getrange(args):
+    selection, selfirst, sellast = idaapi.read_selection()
+
+    argfirst = args[0] if len(args)>0 and type(args[0])==types.IntType else None
+    arglast  = args[1] if len(args)>1 and type(args[1])==types.IntType else None
+    """
+        afirst  alast    sel 
+          None   None     0    ->  here, BADADDR
+          None   None     1    ->    selection
+          None    +       0    ->  here, BADADDR
+          None    +       1    ->    selection
+           +     None     0    ->  afirst, BADADDR
+           +     None     1    ->  afirst, BADADDR
+           +      +       0    ->  afirst, alast
+           +      +       1    ->  afirst, alast
+    """
+    if argfirst is None:
+        if selection:
+            return (selfirst, sellast)
+        else:
+            return (here(), BADADDR)
+    if arglast is None:
+        return (argfirst, BADADDR)
+    else:
+        return (argfirst, arglast)
+
+def getstringpos(args):
+    for i in range(len(args)):
+        if type(args[i])==types.StringType:
+            return i
+    return -1
+
+
+""" enumerator functions """
+
+
+def Texts(*args):
     """
     Enumerate text search matches
 
@@ -15,19 +55,31 @@ def Texts(ea, endea, searchstr, flags):
     @return: list of addresses matching searchstr
 
     Example::
+
         for ea in Texts(FirstSeg(), BADADDR, "LDR *PC, =", SEARCH_REGEX):
             f = idaapi.get_func(ea)
             if f and f.startEA==ea:
                 n= idaapi.get_name(BADADDR, ea)
                 if not n.startswith("sub_"):
                     MakeName(ea, "j_%s" %n)
-    """
-    ea= idaapi.find_text(ea, 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
-    while ea!=idaapi.BADADDR and ea<endea:
-        yield ea
-        ea= idaapi.find_text(idaapi.next_head(ea, endea), 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
 
-def NonFuncs(ea, endea):
+    Will search for functions containing only  "LDR PC, =xxxxx",
+    and rename them as j_XXXXX.
+    """
+    (first, last)= getrange(args)
+    i= getstringpos(args)
+    if i<0:
+        raise Exception("missing searchstring")
+
+    searchstr= args[i]
+    flags = args[i+1] if i+1<len(args) else 0
+
+    ea= idaapi.find_text(first, 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
+    while ea!=idaapi.BADADDR and ea<last:
+        yield ea
+        ea= idaapi.find_text(idaapi.next_head(ea, last), 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
+
+def NonFuncs(*args):
     """
     Enumerate code which is not in a function
 
@@ -37,13 +89,21 @@ def NonFuncs(ea, endea):
     @return: list of addresses containing code, but not in a function
 
     Example::
+
         for ea in NonFuncs(FirstSeg(), BADADDR):
             if not MakeFunction(ea):
                 Jump(ea)
                 break
             Wait()
+
+    Will try to change non-function code to function
+    until MakeFunction fails
     """
-    while ea!=idaapi.BADADDR and ea<endea:
+
+    (first, last)= getrange(args)
+
+    ea = first
+    while ea!=idaapi.BADADDR and ea<last:
         nextcode= idaapi.find_code(ea, idaapi.SEARCH_NEXT|idaapi.SEARCH_DOWN)
         thischunk= idaapi.get_fchunk(ea)
         nextchunk= idaapi.get_next_fchunk(ea)
@@ -51,14 +111,16 @@ def NonFuncs(ea, endea):
             ea= thischunk.endEA
         elif idaapi.isCode(idaapi.getFlags(ea)):
             yield ea
-            ea= idaapi.next_head(ea, endea)
+            ea= idaapi.next_head(ea, last)
+        elif nextchunk is None:
+            return
         elif nextcode<nextchunk.startEA:
             yield nextcode
             ea= nextcode
         else:
             ea= nextchunk.endEA
 
-def Undefs(ea, endea):
+def Undefs(*args):
     """
     Enumerate undefined bytes
 
@@ -68,18 +130,21 @@ def Undefs(ea, endea):
     @return: list of addresses of undefined bytes
 
     Example::
+
         for ea in Undefs(FirstSeg(), BADADDR):
             if isCode(GetFlags(PrevHead(ea))) and (ea%4)!=0 and iszero(ea, 4-(ea%4)):
                 MakeAlign(ea, 4-(ea%4), 2)
 
-        will add alignment directives after code
+    Will add alignment directives after code.
     """
-    ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN)
-    while ea!=idaapi.BADADDR and ea<endea:
+    (first, last)= getrange(args)
+
+    ea= idaapi.find_unknown(first, idaapi.SEARCH_DOWN)
+    while ea!=idaapi.BADADDR and ea<last:
         yield ea
         ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN|idaapi.SEARCH_NEXT)
 
-def Binaries(ea, endea, searchstr):
+def Binaries(*args):
     """
     Enumerate binary search matches
 
@@ -90,9 +155,7 @@ def Binaries(ea, endea, searchstr):
     @return: list of addresses matching searchstr
 
     Example::
-        # this will name all syscall stubs in an android binary
 
-        # assume a enum exists with all syscall numbers
         sysenum= GetEnum("enum_syscalls")
         for ea in Binaries(FirstSeg(), BADADDR, "00 00 00 ef"):
            insn= DecodePreviousInstruction(ea)
@@ -105,45 +168,49 @@ def Binaries(ea, endea, searchstr):
                     else:
                         print "unknown syscall number: %08x" % insn.Op2.value
 
-    """
-    ea= idaapi.find_binary(ea, +endea, searchstr, 16, idaapi.SEARCH_DOWN)
-    while ea!=idaapi.BADADDR and ea<endea:
-        yield ea
-        ea= idaapi.find_binary(ea, +endea, searchstr, 16, idaapi.SEARCH_DOWN|idaapi.SEARCH_NEXT)
+    This will name all syscall stubs in an android binary.
+    Assumes a enum exists with all syscall numbers
 
-def ArrayItems(ea):
+    """
+    (first, last)= getrange(args)
+    i= getstringpos(args)
+    if i<0:
+        raise Exception("missing searchstring")
+    searchstr= args[i]
+
+    ea= idaapi.find_binary(first, last, searchstr, 16, idaapi.SEARCH_DOWN)
+    while ea!=idaapi.BADADDR and ea<last:
+        yield ea
+        ea= idaapi.find_binary(ea, last, searchstr, 16, idaapi.SEARCH_DOWN|idaapi.SEARCH_NEXT)
+
+def ArrayItems(*args):
     """
     Enumerate array items
 
-    @param ea:    address of the array you want the items enumerated
+    @param ea:    address of the array you want the items enumerated, defaults to here()
 
     @return: list of each item in the array.
 
     Example::
-        # assuming the cursor is on an array of structs
-        # where the first struct item points to a name,
-        # this will name the other items in the struct
 
-        for ea in ArrayItems(ScreenEA()):
+        for ea in ArrayItems():
            pname= GetString(Dword(ea))
            MakeName(Dword(ea+4)&~1, "task_%s" % pname)
            MakeName(Dword(ea+8), "taskinfo_%s" % pame)
            MakeName(Dword(ea+12), "stack_%s" % pame)
 
+
+    Assuming the cursor is on an array of structs, in which the
+    first struct item points to a name, this will name the other
+    items in the struct.
     """
-    ti = idaapi.opinfo_t()
-    f= idc.GetFlags(ea)
-    if not idaapi.get_opinfo(ea, 0, f, ti):
-        print "could not get opinfo"
-        return
+    ea = args[0] if len(args)>0 else here()
+
     s= idc.ItemSize(ea)
-    ss= 0
-    if idc.isStruct(f):
-        ss= idaapi.get_struc_size(ti.tid)
-    else:
-        ss= s
+    ss= idaapi.get_data_elsize(ea, idc.GetFlags(ea))
 
     n= s/ss
+
     for i in range(n):
         yield ea+i*ss
 
