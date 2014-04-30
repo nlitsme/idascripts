@@ -4,11 +4,64 @@ import idaapi
 import idc
 import types
 
+"""
+ 
+Enumeration utilities for idapython
+
+ * Texts      - like Alt-T
+ * NonFuncs   - like Alt-U
+ * Undefs     - like Ctrl-U
+ * Binaries   - like Alt-B
+ * ArrayItems
+ * Addrs
+ * NotTails   - like cursor down
+ * BytesThat  
+ * Heads
+ * Funcs
+ * FChunks
+
+the range which will be operated upon can be specified in several ways:
+
+ * pass an area_t subclass ( as returned by idaapi.getseg, get_fchunk, get_func )
+ * no arguments, take selection when available
+ * no arguments: from here until the end
+ * one address: from addr until the end
+ * two addresses: from first until last address
+
+"""
+
+BADADDR         = idaapi.BADADDR
 
 """ utilities for parsing arguments """
 
 def getrange(args):
+    """
+    Determines a address range.
+
+    @param  args:  the argument list passed to the caller
+
+    @return: a pair of addresses
+
+    args can contain one of the following:
+
+    1) a tuple containing (first, last)
+    2) an area_t, containing  (startEA, endEA)
+    3) nothing
+       * if the user made a selection ( using Alt-L ), that selection is returned
+       * otherwise from the cursor line until endoffile
+    4) one address: from address until the end of file
+    5) two addresses: the range between those addresses
+
+    The range is specified as (first,last)
+    meaning all addresses satisfying  first <= addr < last
+
+    """
     selection, selfirst, sellast = idaapi.read_selection()
+
+    if len(args) and type(args[0])==types.TupleType:
+        return args[0]
+    if len(args) and isinstance(args[0], idaapi.area_t):
+        return (args[0].startEA, args[0].endEA)
 
     argfirst = args[0] if len(args)>0 and type(args[0])==types.IntType else None
     arglast  = args[1] if len(args)>1 and type(args[1])==types.IntType else None
@@ -27,7 +80,7 @@ def getrange(args):
         if selection:
             return (selfirst, sellast)
         else:
-            return (here(), BADADDR)
+            return (idc.here(), BADADDR)
     if arglast is None:
         return (argfirst, BADADDR)
     else:
@@ -39,6 +92,12 @@ def getstringpos(args):
             return i
     return -1
 
+def getcallablepos(args):
+    for i in range(len(args)):
+        if type(args[i])==types.FunctionType:
+            return i
+    return -1
+
 
 """ enumerator functions """
 
@@ -47,8 +106,7 @@ def Texts(*args):
     """
     Enumerate text search matches
 
-    @param ea:           where to start
-    @param endea:        BADADDR, or end address
+    @param <range>: see getrange
     @param searchstr:    string or regex
     @param flags:        for instance SEARCH_REGEX
 
@@ -83,8 +141,7 @@ def NonFuncs(*args):
     """
     Enumerate code which is not in a function
 
-    @param ea:    where to start
-    @param endea: BADADDR, or end address
+    @param <range>: see getrange
 
     @return: list of addresses containing code, but not in a function
 
@@ -124,8 +181,7 @@ def Undefs(*args):
     """
     Enumerate undefined bytes
 
-    @param ea:     where to start
-    @param endea:  BADADDR, or end address
+    @param <range>: see getrange
 
     @return: list of addresses of undefined bytes
 
@@ -139,17 +195,20 @@ def Undefs(*args):
     """
     (first, last)= getrange(args)
 
-    ea= idaapi.find_unknown(first, idaapi.SEARCH_DOWN)
+    ea= first
+    # explicitly testing first byte, since find_unknown
+    # implicitly sets SEARCH_NEXT flag
+    if ea<last and not isUnknown(idaapi.getFlags(ea)):
+        ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN)
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
-        ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN|idaapi.SEARCH_NEXT)
+        ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN)
 
 def Binaries(*args):
     """
     Enumerate binary search matches
 
-    @param ea:
-    @param endea:
+    @param <range>: see getrange
     @param searchstr:
 
     @return: list of addresses matching searchstr
@@ -176,6 +235,7 @@ def Binaries(*args):
     i= getstringpos(args)
     if i<0:
         raise Exception("missing searchstring")
+
     searchstr= args[i]
 
     ea= idaapi.find_binary(first, last, searchstr, 16, idaapi.SEARCH_DOWN)
@@ -204,15 +264,130 @@ def ArrayItems(*args):
     first struct item points to a name, this will name the other
     items in the struct.
     """
-    ea = args[0] if len(args)>0 else here()
+    ea = args[0] if len(args)>0 else idc.here()
 
     s= idc.ItemSize(ea)
-    ss= idaapi.get_data_elsize(ea, idc.GetFlags(ea))
+    ss= idaapi.get_data_elsize(ea, idaapi.getFlags(ea))
 
     n= s/ss
 
     for i in range(n):
         yield ea+i*ss
 
+def Addrs(*args):
+    """
+    Enumerate all addresses
 
+    @param <range>: see getrange
+
+    @return: list of all addresses in range
+
+    """
+    (first, last)= getrange(args)
+    for ea in range(first, last):
+        yield ea
+
+def BytesThat(*args):
+    """
+    Enumerate array items
+
+    @param <range>: see getrange
+    @param callable: function which tests the flags
+
+    @return: list of all addresses where callable(GetFlags(ea)) is True
+
+    """
+    (first, last)= getrange(args)
+    i= getcallablepos(args)
+    if i<0:
+        raise Exception("missing callable")
+
+    callable= args[i]
+
+    ea= first
+    if ea<last and not callable(idaapi.getFlags(ea)):
+        ea= idaapi.nextthat(ea, last, callable)
+    while ea!=BADADDR and ea<last:
+        yield ea
+        ea= idaapi.nextthat(ea, last, callable)
+
+def Heads(*args):
+    """
+    Enumerate array items
+
+    @param <range>: see getrange
+
+    @return: list of all heads
+
+    """
+    (first, last)= getrange(args)
+
+    ea= first
+    if ea<last and not idaapi.isHead(idaapi.getFlags(ea)):
+        ea= idaapi.next_head(ea, last)
+    while ea!=BADADDR and ea<last:
+        yield ea
+        ea= idaapi.next_head(ea, last)
+
+def NotTails(*args):
+    """
+    Enumerate array items
+
+    @param <range>: see getrange
+
+    @return: list of all not-tails
+
+    Note that NotTails includes all Heads plus all undefined bytes
+
+    """
+    (first, last)= getrange(args)
+
+    ea= first
+    if ea<last and idaapi.isTail(idaapi.getFlags(ea)):
+        ea= idaapi.next_not_tail(ea)
+    while ea!=BADADDR and ea<last:
+        yield ea
+        ea= idaapi.next_not_tail(ea)
+
+def Funcs(*args):
+    """
+    Enumerate array items
+
+    @param <range>: see getrange
+
+    @return: list of all function starts
+
+    """
+    (first, last)= getrange(args)
+    # find first function head chunk in the range
+    chunk = idaapi.get_fchunk(first)
+    if not chunk:
+        chunk = idaapi.get_next_fchunk(first)
+    while chunk and chunk.startEA < last and (chunk.flags & idaapi.FUNC_TAIL) != 0:
+        chunk = idaapi.get_next_fchunk(chunk.startEA)
+    func = chunk
+
+    while func and func.startEA < last:
+        yield func.startEA
+        func = idaapi.get_next_func(func.startEA)
+
+
+def FChunks(*args):
+    """
+    Enumerate array items
+
+    @param <range>: see getrange
+
+    @return: list of all function chunks in an address range.
+
+    For the list of all chunks in a function use idautils.Chunks
+
+    """
+    (first, last)= getrange(args)
+    chunk = idaapi.get_fchunk(first)
+    if not chunk:
+        chunk = idaapi.get_next_fchunk(first)
+    while chunk and chunk.startEA < last:
+        yield chunk.startEA
+        chunk = idaapi.get_next_fchunk(chunk.startEA)
 
