@@ -16,6 +16,12 @@ Contains several iterators:
 | Undefs      | search unexplored items ( like Ctrl-U )                  |
 | Binaries    | search binary patterns ( like Alt-B )                    |
 | ArrayItems  | return addresses for each item in an array               |
+| Addrs       | all addresses in range                                   |
+| BytesThat   | bytes matching a filter                                  |
+| Heads       | all heads in range                                       |
+| NotTails    | Heads + undefined bytes                                  |
+| Funcs       | enumerate all function starts                            |
+| FChunks     | enumerate all function chunks                            |
 
 The range which is to be searched can be specified in several ways:
 
