@@ -9,6 +9,7 @@ import types
 Enumeration utilities for idapython
 
  * Texts      - like Alt-T
+ * Code       - like Alt-C
  * NonFuncs   - like Alt-U
  * Undefs     - like Ctrl-U
  * Binaries   - like Alt-B
@@ -19,6 +20,7 @@ Enumeration utilities for idapython
  * Heads
  * Funcs
  * FChunks
+ * Names      - todo: iterate over all names in the given range
 
 the range which will be operated upon can be specified in several ways:
 
@@ -58,6 +60,8 @@ def getrange(args):
     """
     selection, selfirst, sellast = idaapi.read_selection()
 
+    if isinstance(args, idaapi.area_t):
+        return (args.startEA, args.endEA)
     if len(args) and type(args[0])==types.TupleType:
         return args[0]
     if len(args) and isinstance(args[0], idaapi.area_t):
@@ -203,6 +207,40 @@ def Undefs(*args):
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
         ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN)
+
+def Code(*args):
+    """
+    Enumerate code bytes
+
+    @param <range>: see getrange
+
+    @return: list of addresses of code bytes
+
+    Example::
+
+        for ea in Code():
+            MakeUnkn(ea, DOUNK_EXPAND)
+            Wait()
+
+    Will delete all code in the selected area.
+
+
+        len(list(MakeUnkn(ea, DOUNK_EXPAND) and Wait() for ea in enumerators.Code(idaapi.getseg(here()))))
+
+    will delete all code in the current segment, and can be pasted in the command area of ida
+
+    """
+    (first, last)= getrange(args)
+
+    ea= first
+    # explicitly testing first byte, since find_code
+    # implicitly sets SEARCH_NEXT flag
+    if ea<last and not idaapi.isCode(idaapi.getFlags(ea)):
+        ea= idaapi.find_code(ea, idaapi.SEARCH_DOWN)
+    while ea!=idaapi.BADADDR and ea<last:
+        yield ea
+        ea= idaapi.find_code(ea, idaapi.SEARCH_DOWN)
+
 
 def Binaries(*args):
     """
