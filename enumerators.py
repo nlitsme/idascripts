@@ -3,16 +3,17 @@
 import idaapi
 import idc
 import types
+import ida_bytes
 
 """
  
 Enumeration utilities for idapython
 
- * Texts      - like Alt-T
+ * Texts      - like Alt-T / ctrl-t
  * Code       - like Alt-C
  * NonFuncs   - like Alt-U
  * Undefs     - like Ctrl-U
- * Binaries   - like Alt-B
+ * Binaries   - like Alt-B / ctrl-b
  * ArrayItems
  * Addrs
  * NotTails   - like cursor down
@@ -29,6 +30,27 @@ the range which will be operated upon can be specified in several ways:
  * no arguments: from here until the end
  * one address: from addr until the end
  * two addresses: from first until last address
+
+
+      for ea in Undefs():
+          if isstring(PrevItem(ea)) and lookslikestring(ea):
+               MakeString(ea)
+
+todo:
+    Data      - ctrl-d
+    Explored  - ctrl-a
+    Immediates- alt-I  / ctrl-i
+    Voids     - ctrl-v
+    Errors    - ctrl-y
+    Enums
+    EnumMembers
+    Structs
+    StructMembers
+
+    make this easier:
+
+for ea in map(lambda x:x[0], filter(lambda x:x[1].startswith("ifenums_"), Names())): OpOff(ea,0,0)
+
 
 """
 
@@ -47,7 +69,7 @@ def getrange(args):
     args can contain one of the following:
 
     1) a tuple containing (first, last)
-    2) an area_t, containing  (startEA, endEA)
+    2) an area_t, containing  (start_ea, end_ea)
     3) nothing
        * if the user made a selection ( using Alt-L ), that selection is returned
        * otherwise from the cursor line until endoffile
@@ -61,11 +83,11 @@ def getrange(args):
     selection, selfirst, sellast = idaapi.read_selection()
 
     if isinstance(args, idaapi.area_t):
-        return (args.startEA, args.endEA)
+        return (args.start_ea, args.end_ea)
     if len(args) and type(args[0])==types.TupleType:
         return args[0]
     if len(args) and isinstance(args[0], idaapi.area_t):
-        return (args[0].startEA, args[0].endEA)
+        return (args[0].start_ea, args[0].end_ea)
 
     argfirst = args[0] if len(args)>0 and type(args[0])==types.IntType else None
     arglast  = args[1] if len(args)>1 and type(args[1])==types.IntType else None
@@ -91,13 +113,13 @@ def getrange(args):
         return (argfirst, arglast)
 
 def getstringpos(args):
-    for i in range(len(args)):
+    for i in xrange(len(args)):
         if type(args[i])==types.StringType:
             return i
     return -1
 
 def getcallablepos(args):
-    for i in range(len(args)):
+    for i in xrange(len(args)):
         if type(args[i])==types.FunctionType:
             return i
     return -1
@@ -118,9 +140,9 @@ def Texts(*args):
 
     Example::
 
-        for ea in Texts(FirstSeg(), BADADDR, "LDR *PC, =", SEARCH_REGEX):
+        for ea in Texts((FirstSeg(), BADADDR), "LDR *PC, =", SEARCH_REGEX):
             f = idaapi.get_func(ea)
-            if f and f.startEA==ea:
+            if f and f.start_ea==ea:
                 n= idaapi.get_name(BADADDR, ea)
                 if not n.startswith("sub_"):
                     MakeName(ea, "j_%s" %n)
@@ -136,10 +158,10 @@ def Texts(*args):
     searchstr= args[i]
     flags = args[i+1] if i+1<len(args) else 0
 
-    ea= idaapi.find_text(first, 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
+    ea= idaapi.find_text(first, idaapi.SEARCH_DOWN|flags, 0, 0, searchstr)
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
-        ea= idaapi.find_text(idaapi.next_head(ea, last), 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
+        ea= idaapi.find_text(idaapi.next_head(ea, last), idaapi.SEARCH_DOWN|flags, 0, 0, searchstr)
 
 def NonFuncs(*args):
     """
@@ -151,7 +173,7 @@ def NonFuncs(*args):
 
     Example::
 
-        for ea in NonFuncs(FirstSeg(), BADADDR):
+        for ea in NonFuncs((FirstSeg(), BADADDR)):
             if not MakeFunction(ea):
                 Jump(ea)
                 break
@@ -169,17 +191,17 @@ def NonFuncs(*args):
         thischunk= idaapi.get_fchunk(ea)
         nextchunk= idaapi.get_next_fchunk(ea)
         if thischunk:
-            ea= thischunk.endEA
-        elif idaapi.isCode(idaapi.getFlags(ea)):
+            ea= thischunk.end_ea
+        elif idaapi.is_code(idaapi.get_full_flags(ea)):
             yield ea
             ea= idaapi.next_head(ea, last)
         elif nextchunk is None:
             return
-        elif nextcode<nextchunk.startEA:
+        elif nextcode<nextchunk.start_ea:
             yield nextcode
             ea= nextcode
         else:
-            ea= nextchunk.endEA
+            ea= nextchunk.end_ea
 
 def Undefs(*args):
     """
@@ -191,7 +213,7 @@ def Undefs(*args):
 
     Example::
 
-        for ea in Undefs(FirstSeg(), BADADDR):
+        for ea in Undefs((FirstSeg(), BADADDR)):
             if isCode(GetFlags(PrevHead(ea))) and (ea%4)!=0 and iszero(ea, 4-(ea%4)):
                 MakeAlign(ea, 4-(ea%4), 2)
 
@@ -202,7 +224,7 @@ def Undefs(*args):
     ea= first
     # explicitly testing first byte, since find_unknown
     # implicitly sets SEARCH_NEXT flag
-    if ea<last and not isUnknown(idaapi.getFlags(ea)):
+    if ea<last and not ida_bytes.is_unknown(idaapi.get_full_flags(ea)):
         ea= idaapi.find_unknown(ea, idaapi.SEARCH_DOWN)
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
@@ -235,7 +257,7 @@ def Code(*args):
     ea= first
     # explicitly testing first byte, since find_code
     # implicitly sets SEARCH_NEXT flag
-    if ea<last and not idaapi.isCode(idaapi.getFlags(ea)):
+    if ea<last and not idaapi.is_code(idaapi.get_full_flags(ea)):
         ea= idaapi.find_code(ea, idaapi.SEARCH_DOWN)
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
@@ -248,13 +270,14 @@ def Binaries(*args):
 
     @param <range>: see getrange
     @param searchstr:
+    @param flags:        for instance SEARCH_CASE
 
     @return: list of addresses matching searchstr
 
     Example::
 
         sysenum= GetEnum("enum_syscalls")
-        for ea in Binaries(FirstSeg(), BADADDR, "00 00 00 ef"):
+        for ea in Binaries((FirstSeg(), BADADDR), "00 00 00 ef"):
            insn= DecodePreviousInstruction(ea)
            if insn.itype==idaapi.ARM_mov and insn.Op1.is_reg(7) and insn.Op2.type==o_imm:
                OpEnumEx(insn.ea, 1, sysenum, 0)
@@ -275,11 +298,12 @@ def Binaries(*args):
         raise Exception("missing searchstring")
 
     searchstr= args[i]
+    flags = args[i+1] if i+1<len(args) else 0
 
-    ea= idaapi.find_binary(first, last, searchstr, 16, idaapi.SEARCH_DOWN)
+    ea= idaapi.find_binary(first, last, searchstr, 16, idaapi.SEARCH_DOWN|flags)
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
-        ea= idaapi.find_binary(ea, last, searchstr, 16, idaapi.SEARCH_DOWN|idaapi.SEARCH_NEXT)
+        ea= idaapi.find_binary(ea, last, searchstr, 16, idaapi.SEARCH_DOWN|idaapi.SEARCH_NEXT|flags)
 
 def ArrayItems(*args):
     """
@@ -305,11 +329,11 @@ def ArrayItems(*args):
     ea = args[0] if len(args)>0 else idc.here()
 
     s= idc.ItemSize(ea)
-    ss= idaapi.get_data_elsize(ea, idaapi.getFlags(ea))
+    ss= idaapi.get_data_elsize(ea, idaapi.get_full_flags(ea))
 
     n= s/ss
 
-    for i in range(n):
+    for i in xrange(n):
         yield ea+i*ss
 
 def Addrs(*args):
@@ -322,8 +346,13 @@ def Addrs(*args):
 
     """
     (first, last)= getrange(args)
-    for ea in range(first, last):
+
+    # note: problem when using range(...) for ea>=2^31
+    # TODO: problem when last == BADADDR
+    ea = first
+    while ea!=BADADDR and ea<last:
         yield ea
+        ea = idc.NextAddr(ea)
 
 def BytesThat(*args):
     """
@@ -343,7 +372,7 @@ def BytesThat(*args):
     callable= args[i]
 
     ea= first
-    if ea<last and not callable(idaapi.getFlags(ea)):
+    if ea<last and not callable(idaapi.get_full_flags(ea)):
         ea= idaapi.nextthat(ea, last, callable)
     while ea!=BADADDR and ea<last:
         yield ea
@@ -361,7 +390,7 @@ def Heads(*args):
     (first, last)= getrange(args)
 
     ea= first
-    if ea<last and not idaapi.isHead(idaapi.getFlags(ea)):
+    if ea<last and not idaapi.is_head(idaapi.get_full_flags(ea)):
         ea= idaapi.next_head(ea, last)
     while ea!=BADADDR and ea<last:
         yield ea
@@ -381,7 +410,7 @@ def NotTails(*args):
     (first, last)= getrange(args)
 
     ea= first
-    if ea<last and idaapi.isTail(idaapi.getFlags(ea)):
+    if ea<last and idaapi.is_tail(idaapi.get_full_flags(ea)):
         ea= idaapi.next_not_tail(ea)
     while ea!=BADADDR and ea<last:
         yield ea
@@ -401,13 +430,13 @@ def Funcs(*args):
     chunk = idaapi.get_fchunk(first)
     if not chunk:
         chunk = idaapi.get_next_fchunk(first)
-    while chunk and chunk.startEA < last and (chunk.flags & idaapi.FUNC_TAIL) != 0:
-        chunk = idaapi.get_next_fchunk(chunk.startEA)
+    while chunk and chunk.start_ea < last and (chunk.flags & idaapi.FUNC_TAIL) != 0:
+        chunk = idaapi.get_next_fchunk(chunk.start_ea)
     func = chunk
 
-    while func and func.startEA < last:
-        yield func.startEA
-        func = idaapi.get_next_func(func.startEA)
+    while func and func.start_ea < last:
+        yield func.start_ea
+        func = idaapi.get_next_func(func.start_ea)
 
 
 def FChunks(*args):
@@ -425,7 +454,17 @@ def FChunks(*args):
     chunk = idaapi.get_fchunk(first)
     if not chunk:
         chunk = idaapi.get_next_fchunk(first)
-    while chunk and chunk.startEA < last:
-        yield chunk.startEA
-        chunk = idaapi.get_next_fchunk(chunk.startEA)
+    while chunk and chunk.start_ea < last:
+        yield chunk.start_ea
+        chunk = idaapi.get_next_fchunk(chunk.start_ea)
 
+def findend(ea):
+    ea0 = ea
+    while True:
+        ea = idc.NextAddr(ea)
+        if XrefsTo(ea):
+            break
+        if idaapi.get_full_flags(ea)&idc.FF_ANYNAME:
+            break
+    return ea-ea0
+    
