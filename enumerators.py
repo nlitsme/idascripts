@@ -25,7 +25,7 @@ Enumeration utilities for idapython
 
 the range which will be operated upon can be specified in several ways:
 
- * pass an area_t subclass ( as returned by idaapi.getseg, get_fchunk, get_func )
+ * pass an range_t subclass ( as returned by idaapi.getseg, get_fchunk, get_func )
  * no arguments, take selection when available
  * no arguments: from here until the end
  * one address: from addr until the end
@@ -69,7 +69,7 @@ def getrange(args):
     args can contain one of the following:
 
     1) a tuple containing (first, last)
-    2) an area_t, containing  (start_ea, end_ea)
+    2) an range_t, containing  (start_ea, end_ea)
     3) nothing
        * if the user made a selection ( using Alt-L ), that selection is returned
        * otherwise from the cursor line until endoffile
@@ -80,17 +80,17 @@ def getrange(args):
     meaning all addresses satisfying  first <= addr < last
 
     """
-    selection, selfirst, sellast = idaapi.read_selection()
+    selection, selfirst, sellast = idaapi.read_range_selection(idaapi.get_current_viewer())
 
-    if isinstance(args, idaapi.area_t):
+    if isinstance(args, idaapi.range_t):
         return (args.start_ea, args.end_ea)
-    if len(args) and type(args[0])==types.TupleType:
+    if len(args) and type(args[0])==tuple:
         return args[0]
-    if len(args) and isinstance(args[0], idaapi.area_t):
+    if len(args) and isinstance(args[0], idaapi.range_t):
         return (args[0].start_ea, args[0].end_ea)
 
-    argfirst = args[0] if len(args)>0 and type(args[0])==types.IntType else None
-    arglast  = args[1] if len(args)>1 and type(args[1])==types.IntType else None
+    argfirst = args[0] if len(args)>0 and type(args[0])==int else None
+    arglast  = args[1] if len(args)>1 and type(args[1])==int else None
     """
         afirst  alast    sel 
           None   None     0    ->  here, BADADDR
@@ -113,13 +113,13 @@ def getrange(args):
         return (argfirst, arglast)
 
 def getstringpos(args):
-    for i in xrange(len(args)):
-        if type(args[i])==types.StringType:
+    for i in range(len(args)):
+        if type(args[i])==str:
             return i
     return -1
 
 def getcallablepos(args):
-    for i in xrange(len(args)):
+    for i in range(len(args)):
         if type(args[i])==types.FunctionType:
             return i
     return -1
@@ -158,10 +158,10 @@ def Texts(*args):
     searchstr= args[i]
     flags = args[i+1] if i+1<len(args) else 0
 
-    ea= idaapi.find_text(first, idaapi.SEARCH_DOWN|flags, 0, 0, searchstr)
+    ea= idaapi.find_text(first, 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
     while ea!=idaapi.BADADDR and ea<last:
         yield ea
-        ea= idaapi.find_text(idaapi.next_head(ea, last), idaapi.SEARCH_DOWN|flags, 0, 0, searchstr)
+        ea= idaapi.find_text(idaapi.next_head(ea, last), 0, 0, searchstr, idaapi.SEARCH_DOWN|flags)
 
 def NonFuncs(*args):
     """
@@ -328,12 +328,12 @@ def ArrayItems(*args):
     """
     ea = args[0] if len(args)>0 else idc.here()
 
-    s= idc.ItemSize(ea)
+    s= idc.get_item_size(ea)
     ss= idaapi.get_data_elsize(ea, idaapi.get_full_flags(ea))
 
     n= s/ss
 
-    for i in xrange(n):
+    for i in range(n):
         yield ea+i*ss
 
 def Addrs(*args):
@@ -352,7 +352,7 @@ def Addrs(*args):
     ea = first
     while ea!=BADADDR and ea<last:
         yield ea
-        ea = idc.NextAddr(ea)
+        ea = idc.next_addr(ea)
 
 def BytesThat(*args):
     """
@@ -461,7 +461,7 @@ def FChunks(*args):
 def findend(ea):
     ea0 = ea
     while True:
-        ea = idc.NextAddr(ea)
+        ea = idc.next_addr(ea)
         if XrefsTo(ea):
             break
         if idaapi.get_full_flags(ea)&idc.FF_ANYNAME:
